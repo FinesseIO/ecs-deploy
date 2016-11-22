@@ -30,7 +30,7 @@ function usage() {
         -D | --desired-count    The number of instantiations of the task to place and keep running in your service.
         -m | --min              minumumHealthyPercent: The lower limit on the number of running tasks during a deployment.
         -M | --max              maximumPercent: The upper limit on the number of running tasks during a deployment.
-        -t | --timeout          Default is 90s. Script monitors ECS Service for new task definition to be running.
+        -t | --timeout          Default is 300s. Script monitors ECS Service for new task definition to be running.
         -e | --tag-env-var      Get image tag name from environment variable. If provided this will override value specified in image name argument.
         --max-definitions       Number of Task Definition Revisions to persist before deregistering oldest revisions.
         -v | --verbose          Verbose output
@@ -86,7 +86,7 @@ MAX_DEFINITIONS=0
 IMAGE=false
 MIN=false
 MAX=false
-TIMEOUT=90
+TIMEOUT=300
 VERBOSE=false
 TAGVAR=false
 AWS_CLI=$(which aws)
@@ -363,43 +363,47 @@ else
     # See if the service is able to come up again
     every=10
     i=0
+    events=0
     while [ $i -lt $TIMEOUT ]
     do
-      # Scan the list of running tasks for that service, and see if one of them is the
-      # new version of the task definition
-
-      RUNNING_TASKS=$($AWS_ECS list-tasks --cluster "$CLUSTER"  --service-name "$SERVICE" --desired-status RUNNING \
-          | jq -r '.taskArns[]')
-
-      if [[ ! -z $RUNNING_TASKS ]] ; then
-        RUNNING=$($AWS_ECS describe-tasks --cluster "$CLUSTER" --tasks $RUNNING_TASKS \
-          | jq ".tasks[]| if .taskDefinitionArn == \"$NEW_TASKDEF\" then . else empty end|.lastStatus" \
-          | grep -e "RUNNING") || :
-
-        if [ "$RUNNING" ]; then
-          echo "Service updated successfully, new task definition running.";
-
-          if [[ $MAX_DEFINITIONS -gt 0 ]]; then
-            FAMILY_PREFIX=${TASK_DEFINITION##*:task-definition/}
-            FAMILY_PREFIX=${FAMILY_PREFIX%*:[0-9]*}
-            TASK_REVISIONS=`$AWS_ECS list-task-definitions --family-prefix $FAMILY_PREFIX --status ACTIVE --sort ASC`
-
-            NUM_ACTIVE_REVISIONS=$(echo "$TASK_REVISIONS" | jq ".taskDefinitionArns|length")
-
-            if [[ $NUM_ACTIVE_REVISIONS -gt $MAX_DEFINITIONS ]]; then
-                LAST_OUTDATED_INDEX=$(($NUM_ACTIVE_REVISIONS - $MAX_DEFINITIONS - 1))
-                for i in $(seq 0 $LAST_OUTDATED_INDEX); do
-                    OUTDATED_REVISION_ARN=$(echo "$TASK_REVISIONS" | jq -r ".taskDefinitionArns[$i]")
-
-                    echo "Deregistering outdated task revision: $OUTDATED_REVISION_ARN"
-
-                    $AWS_ECS deregister-task-definition --task-definition "$OUTDATED_REVISION_ARN" > /dev/null
-                done
-            fi
-          fi
-
-          exit 0
+      SERVICE_STATUS=$($AWS_ECS describe-services --cluster "$CLUSTER" --service "$SERVICE")
+      RUNNING=$(echo "$SERVICE_STATUS" | jq ".services[]|.deployments|length")
+      if [ $events = 0 ]; then
+        events=$(echo "$SERVICE_STATUS" | jq ".services[]|.events[0]|.createdAt" | sed -e "s/\.[0-9]*//")
+      fi
+      for j in $(seq 10 0); do
+        new_events=$(echo "$SERVICE_STATUS" | jq ".services[]|.events[$j]|.createdAt" | sed -e "s/\.[0-9]*//")
+        if [ $new_events -gt $events ]; then
+          echo "[EVENT] $(echo "$SERVICE_STATUS" | jq ".services[]|.events[$j]|.message")";
         fi
+      done
+      if [ $new_events -gt $events ]; then
+        events=$new_events
+      fi
+
+      if [ $RUNNING = 1 ]; then
+        echo "Service updated successfully, new task definition running.";
+
+        if [[ $MAX_DEFINITIONS -gt 0 ]]; then
+          FAMILY_PREFIX=${TASK_DEFINITION##*:task-definition/}
+          FAMILY_PREFIX=${FAMILY_PREFIX%*:[0-9]*}
+          TASK_REVISIONS=`$AWS_ECS list-task-definitions --family-prefix $FAMILY_PREFIX --status ACTIVE --sort ASC`
+
+          NUM_ACTIVE_REVISIONS=$(echo "$TASK_REVISIONS" | jq ".taskDefinitionArns|length")
+
+          if [[ $NUM_ACTIVE_REVISIONS -gt $MAX_DEFINITIONS ]]; then
+              LAST_OUTDATED_INDEX=$(($NUM_ACTIVE_REVISIONS - $MAX_DEFINITIONS - 1))
+              for i in $(seq 0 $LAST_OUTDATED_INDEX); do
+                  OUTDATED_REVISION_ARN=$(echo "$TASK_REVISIONS" | jq -r ".taskDefinitionArns[$i]")
+
+                  echo "Deregistering outdated task revision: $OUTDATED_REVISION_ARN"
+
+                  $AWS_ECS deregister-task-definition --task-definition "$OUTDATED_REVISION_ARN" > /dev/null
+              done
+          fi
+        fi
+
+        exit 0
       fi
 
       sleep $every
