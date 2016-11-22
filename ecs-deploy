@@ -199,10 +199,10 @@ if [ $SERVICE != false ] && [ $CLUSTER == false ]; then
     echo "CLUSTER is required. You can pass the value using -c or --cluster"
     exit 1
 fi
-if [ $IMAGE == false ]; then
-    echo "IMAGE is required. You can pass the value using -i or --image"
-    exit 1
-fi
+# if [ $IMAGE == false ]; then
+#     echo "IMAGE is required. You can pass the value using -i or --image"
+#     exit 1
+# fi
 if ! [[ $MAX_DEFINITIONS =~ ^-?[0-9]+$ ]]; then
     echo "MAX_DEFINITIONS must be numeric, or not defined."
     exit 1
@@ -218,80 +218,82 @@ fi
 # If a group is missing it will be an empty string
 imageRegex="^([a-zA-Z0-9.\-]+):?([0-9]+)?/([a-zA-Z0-9._-]+)/?([a-zA-Z0-9._-]+)?:?([a-zA-Z0-9\._-]+)?$"
 
-if [[ $IMAGE =~ $imageRegex ]]; then
-  # Define variables from matching groups
-  domain=${BASH_REMATCH[1]}
-  port=${BASH_REMATCH[2]}
-  repo=${BASH_REMATCH[3]}
-  img=${BASH_REMATCH[4]}
-  tag=${BASH_REMATCH[5]}
+if [ $IMAGE != false ]; then
+  if [[ $IMAGE =~ $imageRegex ]]; then
+    # Define variables from matching groups
+    domain=${BASH_REMATCH[1]}
+    port=${BASH_REMATCH[2]}
+    repo=${BASH_REMATCH[3]}
+    img=${BASH_REMATCH[4]}
+    tag=${BASH_REMATCH[5]}
 
-  # Validate what we received to make sure we have the pieces needed
-  if [[ "x$domain" == "x" ]]; then
-    echo "Image name does not contain a domain or repo as expected. See usage for supported formats." && exit 1;
-  fi
-  if [[ "x$repo" == "x" ]]; then
-    echo "Image name is missing the actual image name. See usage for supported formats." && exit 1;
-  fi
+    # Validate what we received to make sure we have the pieces needed
+    if [[ "x$domain" == "x" ]]; then
+      echo "Image name does not contain a domain or repo as expected. See usage for supported formats." && exit 1;
+    fi
+    if [[ "x$repo" == "x" ]]; then
+      echo "Image name is missing the actual image name. See usage for supported formats." && exit 1;
+    fi
 
-  # When a match for image is not found, the image name was picked up by the repo group, so reset variables
-  if [[ "x$img" == "x" ]]; then
-    img=$repo
-    repo=""
-  fi
-
-else
-  # check if using root level repo with format like mariadb or mariadb:latest
-  rootRepoRegex="^([a-zA-Z0-9\-]+):?([a-zA-Z0-9\.\-]+)?$"
-  if [[ $IMAGE =~ $rootRepoRegex ]]; then
-    img=${BASH_REMATCH[1]}
+    # When a match for image is not found, the image name was picked up by the repo group, so reset variables
     if [[ "x$img" == "x" ]]; then
-      echo "Invalid image name. See usage for supported formats." && exit 1
+      img=$repo
+      repo=""
     fi
-    tag=${BASH_REMATCH[2]}
-  else
-    echo "Unable to parse image name: $IMAGE, check the format and try again" && exit 1
-  fi
-fi
 
-# If tag is missing make sure we can get it from env var, or use latest as default
-if [[ "x$tag" == "x" ]]; then
-  if [[ $TAGVAR == false ]]; then
-    tag="latest"
   else
-    tag=${!TAGVAR}
-    if [[ "x$tag" == "x" ]]; then
+    # check if using root level repo with format like mariadb or mariadb:latest
+    rootRepoRegex="^([a-zA-Z0-9\-]+):?([a-zA-Z0-9\.\-]+)?$"
+    if [[ $IMAGE =~ $rootRepoRegex ]]; then
+      img=${BASH_REMATCH[1]}
+      if [[ "x$img" == "x" ]]; then
+        echo "Invalid image name. See usage for supported formats." && exit 1
+      fi
+      tag=${BASH_REMATCH[2]}
+    else
+      echo "Unable to parse image name: $IMAGE, check the format and try again" && exit 1
+    fi
+  fi
+
+  # If tag is missing make sure we can get it from env var, or use latest as default
+  if [[ "x$tag" == "x" ]]; then
+    if [[ $TAGVAR == false ]]; then
       tag="latest"
+    else
+      tag=${!TAGVAR}
+      if [[ "x$tag" == "x" ]]; then
+        tag="latest"
+      fi
     fi
   fi
-fi
 
-# Reassemble image name
-useImage=""
-if [[ ! -z ${domain+undefined-guard} ]]; then
-  useImage="$domain"
-fi
-if [[ ! -z ${port} ]]; then
-  useImage="$useImage:$port"
-fi
-if [[ ! -z ${repo+undefined-guard} ]]; then
- if [[ ! "x$repo" == "x" ]]; then
-  useImage="$useImage/$repo"
- fi
-fi
-if [[ ! -z ${img+undefined-guard} ]]; then
-  if [[ "x$useImage" == "x" ]]; then
-    useImage="$img"
-  else
-    useImage="$useImage/$img"
+  # Reassemble image name
+  useImage=""
+  if [[ ! -z ${domain+undefined-guard} ]]; then
+    useImage="$domain"
   fi
-fi
-imageWithoutTag="$useImage"
-if [[ ! -z ${tag+undefined-guard} ]]; then
-  useImage="$useImage:$tag"
-fi
+  if [[ ! -z ${port} ]]; then
+    useImage="$useImage:$port"
+  fi
+  if [[ ! -z ${repo+undefined-guard} ]]; then
+   if [[ ! "x$repo" == "x" ]]; then
+    useImage="$useImage/$repo"
+   fi
+  fi
+  if [[ ! -z ${img+undefined-guard} ]]; then
+    if [[ "x$useImage" == "x" ]]; then
+      useImage="$img"
+    else
+      useImage="$useImage/$img"
+    fi
+  fi
+  imageWithoutTag="$useImage"
+  if [[ ! -z ${tag+undefined-guard} ]]; then
+    useImage="$useImage:$tag"
+  fi
 
-echo "Using image name: $useImage"
+  echo "Using image name: $useImage"
+fi
 
 if [ $SERVICE != false ]; then
   # Get current task definition name from service
@@ -303,10 +305,15 @@ echo "Current task definition: $TASK_DEFINITION";
 # Get a JSON representation of the current task definition
 # + Update definition to use new image name
 # + Filter the def
-DEF=$( $AWS_ECS describe-task-definition --task-def $TASK_DEFINITION \
-        | sed -e "s|\"image\": *\"${imageWithoutTag}:.*\"|\"image\": \"${useImage}\"|g" \
-        | sed -e "s|\"image\": *\"${imageWithoutTag}\"|\"image\": \"${useImage}\"|g" \
-        | jq '.taskDefinition' )
+if [ $IMAGE == false ]; then
+  DEF=$( $AWS_ECS describe-task-definition --task-def $TASK_DEFINITION \
+          | jq '.taskDefinition' )
+else
+  DEF=$( $AWS_ECS describe-task-definition --task-def $TASK_DEFINITION \
+          | sed -e "s|\"image\": *\"${imageWithoutTag}:.*\"|\"image\": \"${useImage}\"|g" \
+          | sed -e "s|\"image\": *\"${imageWithoutTag}\"|\"image\": \"${useImage}\"|g" \
+          | jq '.taskDefinition' )
+fi
 
 # Default JQ filter for new task definition
 NEW_DEF_JQ_FILTER="family: .family, volumes: .volumes, containerDefinitions: .containerDefinitions"
