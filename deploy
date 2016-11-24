@@ -22,6 +22,55 @@ function require {
     }
 }
 
+function getRunningTaskInstance {
+  local cluster=$1
+
+  local instances=$( aws ecs list-container-instances --cluster $cluster )
+  local list=$(echo $instances | jq -r '.containerInstanceArns|join(" ")')
+  local containerInstances=$( aws ecs describe-container-instances \
+    --cluster $CLUSTER \
+    --container-instances ${list} | jq '.containerInstances' )
+  local runningTaskInstances=$( echo $containerInstances | jq -r '[ .[]|select(.runningTasksCount > 0)|.ec2InstanceId ] | join(" ")' )
+  echo $runningTaskInstances
+}
+
+function scaleIn {
+  local cluster=$1
+  local asgName=$2
+  local asgDesiredCapacity=$3
+  local newAsgDesiredCapacity=$4
+
+  runningTaskInstances=$( getRunningTaskInstance $cluster )
+
+  aws autoscaling set-instance-protection \
+    --auto-scaling-group-name $asgName \
+    --instance-ids ${runningTaskInstances} \
+    --protected-from-scale-in
+
+  echo "[INFO] cluster scale in: $newAsgDesiredCapacity -> $asgDesiredCapacity"
+  aws autoscaling set-desired-capacity \
+    --auto-scaling-group-name $asgName \
+    --desired-capacity $asgDesiredCapacity > /dev/null
+
+  local i=0
+  local every=10
+  while [ $i -lt $TIMEOUT ]
+  do
+    size=$( aws ecs list-container-instances --cluster $cluster | jq '.containerInstanceArns|length' )
+    if [ $size = $asgDesiredCapacity ]; then
+      aws autoscaling set-instance-protection \
+        --auto-scaling-group-name $asgName \
+        --instance-ids ${runningTaskInstances} \
+        --no-protected-from-scale-in
+      echo "[INFO] scale in successfully."
+      exit 0
+    fi
+    sleep $every
+    i=$(( $i + $every ))
+  done
+  echo "[ERROR] cluster scale-in not finishing within $TIMEOUT seconds"
+}
+
 # Check for AWS, AWS Command Line Interface
 require aws
 # Check for jq, Command-line JSON processor
@@ -79,43 +128,8 @@ ecsDeployExitCode=$?
 
 if [ $ecsDeployExitCode != 0 ]; then
   echo "[INFO] rollback cluster size: $newAsgDesiredCapacity -> $asgDesiredCapacity"
-  aws autoscaling set-desired-capacity \
-    --auto-scaling-group-name $ASG_NAME \
-    --desired-capacity $asgDesiredCapacity > /dev/null
+  scaleIn $CLUSTER $ASG_NAME $asgDesiredCapacity $newAsgDesiredCapacity
   exit 1
 fi
 
-instances=$( aws ecs list-container-instances --cluster $CLUSTER )
-list=$(echo $instances | jq -r '.containerInstanceArns|join(" ")')
-containerInstances=$( aws ecs describe-container-instances \
-  --cluster $CLUSTER \
-  --container-instances ${list} | jq '.containerInstances' )
-
-runningTaskInstances=$( echo $containerInstances | jq -r '[ .[]|select(.runningTasksCount > 0)|.ec2InstanceId ] | join(" ")' )
-
-aws autoscaling set-instance-protection \
-  --auto-scaling-group-name $ASG_NAME \
-  --instance-ids ${runningTaskInstances} \
-  --protected-from-scale-in
-
-echo "[INFO] cluster scale in: $newAsgDesiredCapacity -> $asgDesiredCapacity"
-aws autoscaling set-desired-capacity \
-  --auto-scaling-group-name $ASG_NAME \
-  --desired-capacity $asgDesiredCapacity > /dev/null
-
-i=0
-every=10
-while [ $i -lt $TIMEOUT ]
-do
-  size=$( aws ecs list-container-instances --cluster $CLUSTER | jq '.containerInstanceArns|length' )
-  if [ $size = $asgDesiredCapacity ]; then
-    aws autoscaling set-instance-protection \
-      --auto-scaling-group-name $ASG_NAME \
-      --instance-ids ${runningTaskInstances} \
-      --no-protected-from-scale-in
-    echo "[INFO] deploy successfully."
-    exit 0
-  fi
-  sleep $every
-  i=$(( $i + $every ))
-done
+scaleIn $CLUSTER $ASG_NAME $asgDesiredCapacity $newAsgDesiredCapacity
