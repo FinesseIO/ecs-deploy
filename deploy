@@ -1,0 +1,121 @@
+#!/bin/bash
+set -o errexit
+set -o pipefail
+set -u
+
+function usage {
+    set -e
+    cat <<EOM
+    deploy -c cluster-name -n service-name --asg ASG name
+EOM
+
+    exit 2
+}
+if [ $# == 0 ]; then usage; fi
+
+# Check requirements
+function require {
+    command -v "$1" > /dev/null 2>&1 || {
+        echo "Some of the required software is not installed:"
+        echo "    please install $1" >&2;
+        exit 1;
+    }
+}
+
+# Check for AWS, AWS Command Line Interface
+require aws
+# Check for jq, Command-line JSON processor
+require jq
+
+# args
+CLUSTER=false
+SERVICE=false
+ASG_NAME=false
+TIMEOUT=300
+
+# Loop through arguments, two at a time for key and value
+while [[ $# -gt 0 ]]
+do
+    key="$1"
+
+    case $key in
+        --asg)
+            ASG_NAME="$2"
+            shift
+            ;;
+        -c|--cluster)
+            CLUSTER="$2"
+            shift
+            ;;
+        -n|--service-name)
+            SERVICE="$2"
+            shift # past argument
+            ;;
+        -t|--timeout)
+            TIMEOUT="$2"
+            shift
+            ;;
+        *)
+            usage
+            exit 2
+        ;;
+    esac
+    shift # past argument or value
+done
+
+asg=$( aws autoscaling describe-auto-scaling-groups --auto-scaling-group-name $ASG_NAME )
+asgInstances=$( echo $asg \
+  | jq '.AutoScalingGroups[] | [.Instances[]|select(.LifecycleState == "InService")]' )
+asgDesiredCapacity=$( echo $asg  | jq '.AutoScalingGroups[0].DesiredCapacity' )
+newAsgDesiredCapacity=$(( $asgDesiredCapacity * 2 ))
+
+echo "[INFO] cluster scale out: $asgDesiredCapacity -> $newAsgDesiredCapacity"
+aws autoscaling set-desired-capacity \
+  --auto-scaling-group-name $ASG_NAME \
+  --desired-capacity $newAsgDesiredCapacity > /dev/null
+
+./ecs-deploy -c $CLUSTER -n $SERVICE
+ecsDeployExitCode=$?
+
+if [ $ecsDeployExitCode != 0 ]; then
+  echo "[INFO] rollback cluster size: $newAsgDesiredCapacity -> $asgDesiredCapacity"
+  aws autoscaling set-desired-capacity \
+    --auto-scaling-group-name $ASG_NAME \
+    --desired-capacity $asgDesiredCapacity > /dev/null
+  exit 1
+fi
+
+instances=$( aws ecs list-container-instances --cluster peroli-dev )
+list=$(echo $instances | jq -r '.containerInstanceArns|join(" ")')
+containerInstances=$( aws ecs describe-container-instances \
+  --cluster peroli-dev \
+  --container-instances ${list} | jq '.containerInstances' )
+
+runningTaskInstances=$( echo $containerInstances | jq -r '[ .[]|select(.runningTasksCount > 0)|.ec2InstanceId ] | join(" ")' )
+
+aws autoscaling set-instance-protection \
+  --auto-scaling-group-name $ASG_NAME \
+  --instance-ids ${runningTaskInstances} \
+  --protected-from-scale-in
+
+echo "[INFO] cluster scale in: $newAsgDesiredCapacity -> $asgDesiredCapacity"
+aws autoscaling set-desired-capacity \
+  --auto-scaling-group-name $ASG_NAME \
+  --desired-capacity $asgDesiredCapacity > /dev/null
+
+i=0
+every=10
+while [ $i -lt $TIMEOUT ]
+do
+  size=$( aws ecs list-container-instances --cluster peroli-dev | jq '.containerInstanceArns|length' )
+  if [ $size = $asgDesiredCapacity ]; then
+    aws autoscaling set-instance-protection \
+      --auto-scaling-group-name $ASG_NAME \
+      --instance-ids ${runningTaskInstances} \
+      --no-protected-from-scale-in
+    echo "[INFO] deploy successfully."
+    exit 0
+  fi
+  sleep $every
+  i=$(( $i + $every ))
+done
