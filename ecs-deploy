@@ -188,15 +188,15 @@ if [ $VERBOSE == true ]; then
 fi
 
 if [ $SERVICE == false ] && [ $TASK_DEFINITION == false ]; then
-    echo "One of SERVICE or TASK DEFINITON is required. You can pass the value using -n / --service-name for a service, or -d / --task-definiton for a task"
+    echo "[ERROR] One of SERVICE or TASK DEFINITON is required. You can pass the value using -n / --service-name for a service, or -d / --task-definiton for a task"
     exit 1
 fi
 if [ $SERVICE != false ] && [ $TASK_DEFINITION != false ]; then
-    echo "Only one of SERVICE or TASK DEFINITON may be specified, but you supplied both"
+    echo "[ERROR] Only one of SERVICE or TASK DEFINITON may be specified, but you supplied both"
     exit 1
 fi
 if [ $SERVICE != false ] && [ $CLUSTER == false ]; then
-    echo "CLUSTER is required. You can pass the value using -c or --cluster"
+    echo "[ERROR] CLUSTER is required. You can pass the value using -c or --cluster"
     exit 1
 fi
 # if [ $IMAGE == false ]; then
@@ -204,7 +204,7 @@ fi
 #     exit 1
 # fi
 if ! [[ $MAX_DEFINITIONS =~ ^-?[0-9]+$ ]]; then
-    echo "MAX_DEFINITIONS must be numeric, or not defined."
+    echo "[ERROR] MAX_DEFINITIONS must be numeric, or not defined."
     exit 1
 fi
 
@@ -229,10 +229,10 @@ if [ $IMAGE != false ]; then
 
     # Validate what we received to make sure we have the pieces needed
     if [[ "x$domain" == "x" ]]; then
-      echo "Image name does not contain a domain or repo as expected. See usage for supported formats." && exit 1;
+      echo "[ERROR] Image name does not contain a domain or repo as expected. See usage for supported formats." && exit 1;
     fi
     if [[ "x$repo" == "x" ]]; then
-      echo "Image name is missing the actual image name. See usage for supported formats." && exit 1;
+      echo "[ERROR] Image name is missing the actual image name. See usage for supported formats." && exit 1;
     fi
 
     # When a match for image is not found, the image name was picked up by the repo group, so reset variables
@@ -292,7 +292,7 @@ if [ $IMAGE != false ]; then
     useImage="$useImage:$tag"
   fi
 
-  echo "Using image name: $useImage"
+  echo "[INFO] Using image name: $useImage"
 fi
 
 if [ $SERVICE != false ]; then
@@ -300,7 +300,7 @@ if [ $SERVICE != false ]; then
   TASK_DEFINITION=`$AWS_ECS describe-services --services $SERVICE --cluster $CLUSTER | jq -r .services[0].taskDefinition`
 fi
 
-echo "Current task definition: $TASK_DEFINITION";
+echo "[INFO] Current task definition: $TASK_DEFINITION";
 
 # Get a JSON representation of the current task definition
 # + Update definition to use new image name
@@ -333,10 +333,10 @@ NEW_DEF=$(echo $DEF | jq "{${NEW_DEF_JQ_FILTER}}")
 
 # Register the new task definition, and store its ARN
 NEW_TASKDEF=`$AWS_ECS register-task-definition --cli-input-json "$NEW_DEF" | jq -r .taskDefinition.taskDefinitionArn`
-echo "New task definition: $NEW_TASKDEF";
+echo "[INFO] New task definition: $NEW_TASKDEF";
 
 if [ $SERVICE == false ]; then
-  echo "Task definition updated successfully"
+  echo "[INFO] Task definition updated successfully"
 else
   DEPLOYMENT_CONFIG=""
   if [ $MAX != false ]; then
@@ -382,7 +382,7 @@ else
       fi
 
       if [ $RUNNING = 1 ]; then
-        echo "Service updated successfully, new task definition running.";
+        echo "[INFO] Service updated successfully, new task definition running.";
 
         if [[ $MAX_DEFINITIONS -gt 0 ]]; then
           FAMILY_PREFIX=${TASK_DEFINITION##*:task-definition/}
@@ -396,7 +396,7 @@ else
               for i in $(seq 0 $LAST_OUTDATED_INDEX); do
                   OUTDATED_REVISION_ARN=$(echo "$TASK_REVISIONS" | jq -r ".taskDefinitionArns[$i]")
 
-                  echo "Deregistering outdated task revision: $OUTDATED_REVISION_ARN"
+                  echo "[INFO] Deregistering outdated task revision: $OUTDATED_REVISION_ARN"
 
                   $AWS_ECS deregister-task-definition --task-definition "$OUTDATED_REVISION_ARN" > /dev/null
               done
@@ -411,9 +411,9 @@ else
     done
 
     # Timeout
-    echo "ERROR: New task definition not running within $TIMEOUT seconds"
+    echo "[ERROR] New task definition not running within $TIMEOUT seconds"
     exit 1
   else
-    echo "Skipping check for running task definition, as desired-count <= 0"
+    echo "[INFO] Skipping check for running task definition, as desired-count <= 0"
   fi
 fi
