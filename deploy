@@ -123,8 +123,8 @@ aws autoscaling set-desired-capacity \
   --auto-scaling-group-name $ASG_NAME \
   --desired-capacity $newAsgDesiredCapacity > /dev/null
 
-./ecs-deploy -c $CLUSTER -n $SERVICE
-ecsDeployExitCode=$?
+ecsDeployExitCode=0
+./ecs-deploy -c $CLUSTER -n $SERVICE || ecsDeployExitCode=$?
 
 if [ $ecsDeployExitCode != 0 ]; then
   echo "[INFO] rollback cluster size: $newAsgDesiredCapacity -> $asgDesiredCapacity"
