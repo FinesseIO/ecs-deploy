@@ -85,10 +85,10 @@ if [ $ecsDeployExitCode != 0 ]; then
   exit 1
 fi
 
-instances=$( aws ecs list-container-instances --cluster peroli-dev )
+instances=$( aws ecs list-container-instances --cluster $CLUSTER )
 list=$(echo $instances | jq -r '.containerInstanceArns|join(" ")')
 containerInstances=$( aws ecs describe-container-instances \
-  --cluster peroli-dev \
+  --cluster $CLUSTER \
   --container-instances ${list} | jq '.containerInstances' )
 
 runningTaskInstances=$( echo $containerInstances | jq -r '[ .[]|select(.runningTasksCount > 0)|.ec2InstanceId ] | join(" ")' )
@@ -107,7 +107,7 @@ i=0
 every=10
 while [ $i -lt $TIMEOUT ]
 do
-  size=$( aws ecs list-container-instances --cluster peroli-dev | jq '.containerInstanceArns|length' )
+  size=$( aws ecs list-container-instances --cluster $CLUSTER | jq '.containerInstanceArns|length' )
   if [ $size = $asgDesiredCapacity ]; then
     aws autoscaling set-instance-protection \
       --auto-scaling-group-name $ASG_NAME \
