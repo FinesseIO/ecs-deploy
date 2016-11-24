@@ -80,7 +80,7 @@ require jq
 CLUSTER=false
 SERVICE=false
 ASG_NAME=false
-TIMEOUT=300
+TIMEOUT=900
 
 # Loop through arguments, two at a time for key and value
 while [[ $# -gt 0 ]]
