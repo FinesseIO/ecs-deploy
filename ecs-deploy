@@ -364,6 +364,7 @@ else
     every=10
     i=0
     events=0
+    new_events=0
     while [ $i -lt $TIMEOUT ]
     do
       SERVICE_STATUS=$($AWS_ECS describe-services --cluster "$CLUSTER" --service "$SERVICE")
