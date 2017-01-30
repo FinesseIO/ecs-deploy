@@ -1,4 +1,4 @@
-FROM silintl/ubuntu:14.04
+FROM ubuntu:16.04
 MAINTAINER Phillip Shipley <phillip_shipley@sil.org>
 
 RUN apt-get update -y \
