@@ -412,8 +412,8 @@ else
     done
 
     # Timeout
-    echo "[ERROR] New task definition not running within $TIMEOUT seconds"
-    exit 1
+    echo "[WARNING] New task definition deploying to service, but not running within $TIMEOUT seconds"
+    exit 0
   else
     echo "[INFO] Skipping check for running task definition, as desired-count <= 0"
   fi
